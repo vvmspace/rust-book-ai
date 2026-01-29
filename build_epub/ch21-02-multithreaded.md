@@ -54,6 +54,27 @@ fn handle_connection(mut stream: TcpStream) {
 
 Мы могли бы создавать новый поток на каждый запрос (`thread::spawn`). Но представьте, что придет 10 миллионов пользователей. Ваш сервер просто взорвется от такого количества потоков (DoS своими руками).
 
+
+**Листинг 21-11: Создаем новый поток для каждого соединения** *(src/main.rs)*
+
+
+```rust,no_run
+fn main() {
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        thread::spawn(|| {
+            handle_connection(stream);
+        });
+    }
+}
+
+```
+
+
+
 Нам нужен **Пул Потоков**. Это фиксированная группа "работяг" (threads), которые ждут задачи. Пришел запрос -> свободный работяга взял, обработал, вернулся в строй. Если все заняты — запрос ждет в очереди.
 
 Это баланс между скоростью и защитой ресурсов.
@@ -233,9 +254,132 @@ impl ThreadPool {
 
 `Worker` — это структура, которая будет хранить поток и `id`.
 
+
+**Листинг 21-15: Определяем структуру Worker** *(src/lib.rs)*
+
+
+```rust,noplayground
+use std::thread;
+
+pub struct ThreadPool {
+    workers: Vec<Worker>,
+}
+
+impl ThreadPool {
+    // --snip--
+    pub fn new(size: usize) -> ThreadPool {
+        assert!(size > 0);
+
+        let mut workers = Vec::with_capacity(size);
+
+        for id in 0..size {
+            workers.push(Worker::new(id));
+        }
+
+        ThreadPool { workers }
+    }
+    // --snip--
+}
+
+struct Worker {
+    id: usize,
+    thread: thread::JoinHandle<()>,
+}
+
+impl Worker {
+    fn new(id: usize) -> Worker {
+        let thread = thread::spawn(|| {});
+
+        Worker { id, thread }
+    }
+}
+
+```
+
+
+
+Теперь обновим `ThreadPool`, чтобы он хранил `Worker`-ов, а не потоки напрямую.
+
+
+**Листинг 21-16: ThreadPool хранит Worker-ов** *(src/lib.rs)*
+
+
+```rust,noplayground
+use std::{sync::mpsc, thread};
+
+pub struct ThreadPool {
+    workers: Vec<Worker>,
+    sender: mpsc::Sender<Job>,
+}
+
+struct Job;
+
+impl ThreadPool {
+    // --snip--
+    pub fn new(size: usize) -> ThreadPool {
+        assert!(size > 0);
+
+        let (sender, receiver) = mpsc::channel();
+
+        let mut workers = Vec::with_capacity(size);
+
+        for id in 0..size {
+            workers.push(Worker::new(id));
+        }
+
+        ThreadPool { workers, sender }
+    }
+    // --snip--
+}
+
+```
+
+
+
 1. `ThreadPool` создает канал (channel).
 2. `ThreadPool` держит отправляющий конец (Sender).
 3. Каждый `Worker` держит принимающий конец (Receiver).
+
+Попробуем передать receiver в `Worker`:
+
+
+**Листинг 21-17: Передаем receiver воркеру (не компилируется)** *(src/lib.rs)*
+
+
+```rust,ignore,does_not_compile
+impl ThreadPool {
+    // --snip--
+    pub fn new(size: usize) -> ThreadPool {
+        assert!(size > 0);
+
+        let (sender, receiver) = mpsc::channel();
+
+        let mut workers = Vec::with_capacity(size);
+
+        for id in 0..size {
+            workers.push(Worker::new(id, receiver));
+        }
+
+        ThreadPool { workers, sender }
+    }
+    // --snip--
+}
+
+// --snip--
+
+impl Worker {
+    fn new(id: usize, receiver: mpsc::Receiver<Job>) -> Worker {
+        let thread = thread::spawn(|| {
+            receiver;
+        });
+
+        Worker { id, thread }
+    }
+}
+
+```
+
+
 
 Но стоп! Канал в Rust — это **MPSC** (Multiple Producer, Single Consumer). Много отправителей, ОДИН получатель. А у нас много воркеров, которые хотят слушать одну очередь.
 

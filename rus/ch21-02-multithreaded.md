@@ -29,6 +29,14 @@
 
 Мы могли бы создавать новый поток на каждый запрос (`thread::spawn`). Но представьте, что придет 10 миллионов пользователей. Ваш сервер просто взорвется от такого количества потоков (DoS своими руками).
 
+<Listing number="21-11" file-name="src/main.rs" caption="Создаем новый поток для каждого соединения">
+
+```rust,no_run
+{{#rustdoc_include ../listings/ch21-web-server/listing-21-11/src/main.rs:here}}
+```
+
+</Listing>
+
 Нам нужен **Пул Потоков**. Это фиксированная группа "работяг" (threads), которые ждут задачи. Пришел запрос -> свободный работяга взял, обработал, вернулся в строй. Если все заняты — запрос ждет в очереди.
 
 Это баланс между скоростью и защитой ресурсов.
@@ -124,9 +132,37 @@
 
 `Worker` — это структура, которая будет хранить поток и `id`.
 
+<Listing number="21-15" file-name="src/lib.rs" caption="Определяем структуру Worker">
+
+```rust,noplayground
+{{#rustdoc_include ../listings/ch21-web-server/listing-21-15/src/lib.rs:here}}
+```
+
+</Listing>
+
+Теперь обновим `ThreadPool`, чтобы он хранил `Worker`-ов, а не потоки напрямую.
+
+<Listing number="21-16" file-name="src/lib.rs" caption="ThreadPool хранит Worker-ов">
+
+```rust,noplayground
+{{#rustdoc_include ../listings/ch21-web-server/listing-21-16/src/lib.rs:here}}
+```
+
+</Listing>
+
 1. `ThreadPool` создает канал (channel).
 2. `ThreadPool` держит отправляющий конец (Sender).
 3. Каждый `Worker` держит принимающий конец (Receiver).
+
+Попробуем передать receiver в `Worker`:
+
+<Listing number="21-17" file-name="src/lib.rs" caption="Передаем receiver воркеру (не компилируется)">
+
+```rust,ignore,does_not_compile
+{{#rustdoc_include ../listings/ch21-web-server/listing-21-17/src/lib.rs:here}}
+```
+
+</Listing>
 
 Но стоп! Канал в Rust — это **MPSC** (Multiple Producer, Single Consumer). Много отправителей, ОДИН получатель. А у нас много воркеров, которые хотят слушать одну очередь.
 
